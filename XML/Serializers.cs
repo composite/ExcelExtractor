@@ -686,6 +686,12 @@ namespace ExcelExtractor.XML
         /// </summary>
         [XmlText]
         public string Text { get; set; }
+        /// <summary>
+        /// Gets or sets the auto size column.
+        /// </summary>
+        /// <value>the auto size column.</value>
+        [XmlAttribute(AttributeName = "AutoSizeColumn")]
+        public bool AutoSizeColumn { get; set; }
     }
 
     /// <summary>
@@ -699,7 +705,7 @@ namespace ExcelExtractor.XML
         /// </summary>
         /// <value>The index.</value>
         [XmlAttribute(AttributeName = "Index")]
-        public string Index { get; set; }
+        public int Index { get; set; }
         /// <summary>
         /// Gets or sets the style.
         /// </summary>
@@ -732,7 +738,12 @@ namespace ExcelExtractor.XML
     [XmlRoot(ElementName = "HGroup"), Serializable]
     public class HGroup : CellGroup
     {
-        
+        /// <summary>
+        /// Gets or sets the height.
+        /// </summary>
+        /// <value>The height.</value>
+        [XmlAttribute(AttributeName = "Height")]
+        public int Height { get; set; }
     }
 
     /// <summary>
@@ -741,7 +752,12 @@ namespace ExcelExtractor.XML
     [XmlRoot(ElementName = "VGroup"), Serializable]
     public class VGroup : CellGroup
     {
-
+        /// <summary>
+        /// Gets or sets the width.
+        /// </summary>
+        /// <value>The width.</value>
+        [XmlAttribute(AttributeName = "Width")]
+        public int Width { get; set; }
     }
 
     /// <summary>
