@@ -2,23 +2,21 @@
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
-using System.Data.SqlClient;
+using System.Drawing;
 using System.Globalization;
 using System.Linq;
 using System.IO;
 using System.Xml.Serialization;
-using NPOI.HSSF.UserModel;
-using NPOI.HSSF.Util;
-using NPOI.SS.UserModel;
-using NPOI.XSSF.UserModel;
 using System.Reflection;
+using OfficeOpenXml;
+using OfficeOpenXml.Style;
 
 namespace ExcelExtractor.XML
 {
     /// <summary>
     /// Excel Serializing Execution
     /// </summary>
-    class Serializing
+    class Serializing:IDisposable
     {
         /// <summary>
         /// Each connection for internal use
@@ -77,6 +75,7 @@ namespace ExcelExtractor.XML
             public DbConnection SheetConnection { get; private set; }
             public DbConnection RowConnection { get; private set; }
             public DbConnection CellConnection { get; private set; }
+            public int CommandTimeout { get; set; }
 
             public void Dispose()
             {
@@ -90,11 +89,11 @@ namespace ExcelExtractor.XML
         /// <summary>
         /// XML Workbook
         /// </summary>
-        private readonly Workbook book = null;
+        private readonly ExcelWorkbook book = null;
         /// <summary>
         /// Excel Workbook
         /// </summary>
-        private readonly IWorkbook excel = null;
+        private ExcelPackage excel = null;
         /// <summary>
         /// Each DB Connection
         /// </summary>
@@ -115,11 +114,6 @@ namespace ExcelExtractor.XML
         private int sheetidx = 1;
 
         /// <summary>
-        /// named styles
-        /// </summary>
-        private Dictionary<string, ICellStyle> styles = new Dictionary<string, ICellStyle>(0);
-
-        /// <summary>
         /// Serialize constructor from a file
         /// </summary>
         /// <param name="file">save file as...</param>
@@ -132,8 +126,8 @@ namespace ExcelExtractor.XML
 
             using (var stream = File.Open(file, FileMode.Open))
             {
-                var serial = new XmlSerializer(typeof(Workbook));
-                book = (Workbook) serial.Deserialize(stream);
+                var serial = new XmlSerializer(typeof(ExcelWorkbook));
+                book = (ExcelWorkbook) serial.Deserialize(stream);
             }
 
             if (book == null) throw new NullReferenceException("template must not be null. may be failed to making excel template.");
@@ -141,9 +135,9 @@ namespace ExcelExtractor.XML
             if (book.ConnectionString != null)
             {
                 this.conn = new ConnectClass(DbProviderFactories.GetFactory(book.ConnectionString.Type), book.ConnectionString.Text);
+                if (book.ConnectionString.Timeout < 0) conn.CommandTimeout = 0;
+                else if (book.ConnectionString.Timeout < 0) conn.CommandTimeout = book.ConnectionString.Timeout;
             }
-
-            excel = book.Xlsx ? (IWorkbook)new XSSFWorkbook() : new HSSFWorkbook();
 
             Console.WriteLine("Serialize initialzed.");
 
@@ -163,120 +157,88 @@ namespace ExcelExtractor.XML
             return chars.Select(c => ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))).All(isHex => isHex);
         }
 
-        private short GetColor(string color)
+        public static Color TranslateColor(string cs)
         {
-            
-            if (color.Length == 6 && IsHex(color))
+            Color co = Color.White;
+            if (cs != null)
             {
-                byte[] raw = new byte[3];
-                for (int i = 0; i < raw.Length; i++)
-                    raw[i] = byte.Parse(color.Substring(i*2, (i + 1)*2), NumberStyles.AllowHexSpecifier);
-
-                return new XSSFColor(raw).Indexed;
+                KnownColor kco;
+                if (cs.Length > 3 && cs[0] == '#' && IsHex(cs.Substring(1)))
+                    co = ColorTranslator.FromHtml(cs);
+                else if (Enum.TryParse(cs, out kco)) co = Color.FromKnownColor(kco);
             }
-            else
-            {
-                Type named = typeof (HSSFColor)
-                    .GetNestedTypes(BindingFlags.Instance | BindingFlags.Public)
-                    .FirstOrDefault(t => t.Name.Equals(color, StringComparison.InvariantCultureIgnoreCase));
-
-                if (named != null)
-                {
-                    return ((IColor) Activator.CreateInstance(named)).Indexed;
-                }
-                else return HSSFColor.COLOR_NORMAL;
-            }
-
-            
+            return co;
         }
 
-        private static NPOI.SS.UserModel.BorderStyle GetBorderStyle(string bs)
+        private void ApplyStyle(ExcelWorksheet sheet, ExcelStyle style)
         {
-            foreach (var style in Enum.GetNames(typeof(NPOI.SS.UserModel.BorderStyle)))
+            Console.WriteLine("Apply style range : " + style.Range);
+            try
             {
-                if (style.Equals(bs, StringComparison.InvariantCultureIgnoreCase)) return (NPOI.SS.UserModel.BorderStyle) Enum.Parse(typeof (NPOI.SS.UserModel.BorderStyle), style);
-            }
-            return NPOI.SS.UserModel.BorderStyle.None;
-        }
-
-        private void ApplyCellStyle(ISheet origin, Sheet sheet)
-        {
-            HGroup heven = null, hodd = null;
-            VGroup veven = null, vodd = null;
-
-            if (sheet.HGroup != null)
-            {
-                heven = sheet.HGroup.FirstOrDefault(hg => "even".Equals(hg.IndexGroup, StringComparison.InvariantCultureIgnoreCase));
-                hodd = sheet.HGroup.FirstOrDefault(hg => "odd".Equals(hg.IndexGroup, StringComparison.InvariantCultureIgnoreCase));
-            }
-            if (sheet.VGroup != null)
-            {
-                veven = sheet.VGroup.FirstOrDefault(vg => "even".Equals(vg.IndexGroup, StringComparison.InvariantCultureIgnoreCase));
-                vodd = sheet.VGroup.FirstOrDefault(vg => "odd".Equals(vg.IndexGroup, StringComparison.InvariantCultureIgnoreCase));
-            }
-
-            int maxcol = 0, rc = 0;
-            var iterate = origin.GetEnumerator();
-            while (iterate.MoveNext())
-            {
-                IRow rw = (IRow) iterate.Current;
-                maxcol = Math.Max(maxcol, rw.Cells.Count);
-
-                if (sheet.VGroup != null)
+                var range = sheet.Cells[style.Range];
+                if (style.Border != null)
                 {
-                    short height = (short) (sheet.HGroup.FirstOrDefault(hg => hg.Index == rc) ?? new HGroup()).Height;
-                    if (height > 0) rw.Height = height;
-                }
-
-                foreach (var cell in rw.Cells)
-                {
-                    if (cell.CellStyle == null)
+                    var prop = range.Style.Border;
+                    Action<ExcelBorderBase, ExcelBorderItem> borfunc = (bord, item) =>
                     {
-                        CellGroup cg = null;
-                        if (sheet.HGroup != null) cg = sheet.HGroup.FirstOrDefault(hg => hg.Index == cell.ColumnIndex);
-                        else if(sheet.VGroup != null) cg = sheet.VGroup.FirstOrDefault(vg => vg.Index == rc);
-                        else if (hodd != null || heven != null) cg = cell.ColumnIndex%2 == 0 ? hodd : heven;
-                        else if (vodd != null || veven != null) cg = rc%2 == 0 ? vodd : veven;
+                        Color co = TranslateColor(bord.Color);
 
-                        cell.CellStyle = excel.CreateCellStyle();
-                        if (cg != null && styles.ContainsKey(cg.Style)) cell.CellStyle.CloneStyleFrom(styles[cg.Style]);
-                        switch ((cg.HAlign ?? string.Empty).ToLower())
+                        ExcelBorderStyle st = ExcelBorderStyle.None;
+                        if (bord.Style != null) Enum.TryParse(bord.Style, out st);
+
+                        if (st != ExcelBorderStyle.None)
                         {
-                            case "left":
-                                cell.CellStyle.Alignment = HorizontalAlignment.Left;
-                                break;
-                            case "center":
-                                cell.CellStyle.Alignment = HorizontalAlignment.Center;
-                                break;
-                            case "right":
-                                cell.CellStyle.Alignment = HorizontalAlignment.Right;
-                                break;
+                            if (item != null)
+                            {
+                                item.Style = st;
+                                item.Color.SetColor(co);
+                            }
+                            else prop.BorderAround(st, co);
                         }
-                        switch ((cg.VAlign ?? string.Empty).ToLower())
-                        {
-                            case "top":
-                                cell.CellStyle.VerticalAlignment = VerticalAlignment.Top;
-                                break;
-                            case "middle":
-                                cell.CellStyle.VerticalAlignment = VerticalAlignment.Center;
-                                break;
-                            case "bottom":
-                                cell.CellStyle.VerticalAlignment = VerticalAlignment.Bottom;
-                                break;
-                        }
+                        
+                    };
+
+                    var border = style.Border;
+                    if (border.All != null)
+                    {
+                        borfunc.Invoke(border.All, null);
+                    }
+                    else
+                    {
+                        if (border.Top != null) borfunc.Invoke(border.Top, prop.Top);
+                        if (border.Left != null) borfunc.Invoke(border.Left, prop.Left);
+                        if (border.Right != null) borfunc.Invoke(border.Right, prop.Right);
+                        if (border.Bottom != null) borfunc.Invoke(border.Bottom, prop.Bottom);
                     }
                 }
-
-                rc++;
-            }
-            if(sheet.AutoSizeColumn)
-                for(int i=0;i<maxcol;i++) origin.AutoSizeColumn(i);
-            else
-                for (int i = 0; i < maxcol; i++)
+                if (style.Font != null)
                 {
-                    int width = (sheet.VGroup.FirstOrDefault(vg => vg.Index == rc) ?? new VGroup()).Width;
-                    if (width > 0) origin.SetColumnWidth(i, width);
+                    var prop = range.Style.Font;
+                    var font = style.Font;
+                    prop.Color.SetColor(TranslateColor(font.Color));
+                    prop.Name = font.Family;
+                    prop.Size = font.Size;
+                    prop.Bold = font.Bold;
+                    prop.Italic = font.Italic;
+                    prop.UnderLine = font.Underline;
+                    prop.Strike = font.Strike;
                 }
+                if (style.Back != null)
+                {
+                    var ptt = ExcelFillStyle.None;
+                    if (Enum.TryParse(style.Back.Pattern, out ptt) && ptt != ExcelFillStyle.None)
+                    {
+                        range.Style.Fill.PatternType = ptt;
+                        range.Style.Fill.BackgroundColor.SetColor(TranslateColor(style.Back.Color));
+                    }
+
+                }
+
+            }
+            catch (Exception E)
+            {
+                Console.Error.WriteLine(E.ToString());
+            }
         }
 
         public Serializing Do(out string path)
@@ -285,22 +247,24 @@ namespace ExcelExtractor.XML
 
             var exfile = book.File;
             string filepath;// = Path.Combine(exfile.Path ?? string.Empty, exfile.Name);
+            object[] args = new object[0];
 
             conn.Open();
 
-            if (exfile.Sql != SQLType.PlainText)
+            if (exfile.SQL != ExcelSQLType.PlainText)
             {
                 using (DbCommand cmd = conn.Connection.CreateCommand())
                 {
-                    
-                    cmd.CommandType = exfile.Sql == SQLType.Procedure ? CommandType.StoredProcedure : CommandType.Text;
+
+                    cmd.CommandTimeout = conn.CommandTimeout;
+                    cmd.CommandType = exfile.SQL == ExcelSQLType.Procedure ? CommandType.StoredProcedure : CommandType.Text;
                     cmd.CommandText = exfile.Text;
 
                     using (DbDataReader reader = cmd.ExecuteReader())
                     {
                         if (reader.Read())
                         {
-                            object[] args = new object[reader.FieldCount];
+                            args = new object[reader.FieldCount];
                             reader.GetValues(args);
                             filepath = Path.Combine(exfile.Path ?? string.Empty, String.Format(exfile.Name, args));
                         }
@@ -319,118 +283,22 @@ namespace ExcelExtractor.XML
             Console.WriteLine("Generating Excel file : {0}", filepath);
 
             FileInfo fileInfo = new FileInfo(filepath);
+            
 
             if(fileInfo.Exists && !isOverwrite) throw new FileSkipException();
+            if (!fileInfo.Directory.Exists) Directory.CreateDirectory(fileInfo.Directory.FullName);
 
             try
             {
 
-
-                if (book.Styles != null)
-                    foreach (var style in book.Styles.Style)
-                    {
-                        var cellstyle = excel.CreateCellStyle();
-
-
-
-                        if (style.Font != null)
-                        {
-                            var font = excel.CreateFont();
-                            font.FontName = style.Font.Face;
-                            font.FontHeight = style.Font.Size;
-                            font.Color = GetColor(style.Font.Color);
-                            font.Boldweight = (short) (style.Font.Bold ? 1 : 0);
-                            font.IsItalic = style.Font.Italic;
-                            font.IsStrikeout = style.Font.Strike;
-                            font.Underline = style.Font.Underline ? FontUnderlineType.Single : FontUnderlineType.None;
-
-                            cellstyle.SetFont(font);
-                        }
-
-                        if (style.Border != null || style.Back != null)
-                        {
-
-                            if (style.Back != null)
-                            {
-                                cellstyle.FillBackgroundColor = GetColor(style.Back.Color);
-                            }
-
-                            if (style.Border != null)
-                                if (style.Border.All != null)
-                                {
-                                    cellstyle.BorderLeft = cellstyle.BorderRight = cellstyle.BorderTop = cellstyle.BorderBottom = GetBorderStyle(style.Border.All.Width);
-                                    cellstyle.LeftBorderColor = cellstyle.RightBorderColor = cellstyle.TopBorderColor = cellstyle.BottomBorderColor = GetColor(style.Border.All.Color);
-                                }
-                                else
-                                {
-                                    if (style.Border.Left != null)
-                                    {
-                                        cellstyle.BorderLeft = GetBorderStyle(style.Border.Left.Width);
-                                        cellstyle.LeftBorderColor = GetColor(style.Border.Left.Color);
-                                    }
-                                    if (style.Border.Right != null)
-                                    {
-                                        cellstyle.BorderLeft = GetBorderStyle(style.Border.Right.Width);
-                                        cellstyle.LeftBorderColor = GetColor(style.Border.Right.Color);
-                                    }
-                                    if (style.Border.Top != null)
-                                    {
-                                        cellstyle.BorderLeft = GetBorderStyle(style.Border.Top.Width);
-                                        cellstyle.LeftBorderColor = GetColor(style.Border.Top.Color);
-                                    }
-                                    if (style.Border.Bottom != null)
-                                    {
-                                        cellstyle.BorderLeft = GetBorderStyle(style.Border.Bottom.Width);
-                                        cellstyle.LeftBorderColor = GetColor(style.Border.Bottom.Color);
-                                    }
-                                }
-                        }
-
-                        /*
-                        switch ((style.HAlign ?? string.Empty).ToLower())
-                        {
-                            case "left":
-                                cellstyle.Alignment = HorizontalAlignment.Left;
-                                break;
-                            case "center":
-                                cellstyle.Alignment = HorizontalAlignment.Center;
-                                break;
-                            case "right":
-                                cellstyle.Alignment = HorizontalAlignment.Right;
-                                break;
-                        }
-                        switch ((style.VAlign ?? string.Empty).ToLower())
-                        {
-                            case "top":
-                                cellstyle.VerticalAlignment = VerticalAlignment.Top;
-                                break;
-                            case "middle":
-                                cellstyle.VerticalAlignment = VerticalAlignment.Center;
-                                break;
-                            case "bottom":
-                                cellstyle.VerticalAlignment = VerticalAlignment.Bottom;
-                                break;
-                        }
-                        */
-
-                        styles.Add(style.Id, cellstyle);
-
-                    }
-
-                if (book.Sheet == null || book.Sheet.Length == 0) throw new SerializingException("No sheet specified. You must have least 1 <Sheet> element.");
+                if (book.Sheets == null || book.Sheets.Count == 0) throw new SerializingException("No sheet specified. You must have least 1 <Sheet> element.");
 
                 Console.WriteLine("Generating sheets...");
 
-                foreach (var sheet in book.Sheet) DoSheet(sheet);
+                foreach (var sheet in book.Sheets) DoSheet(sheet, fileInfo, args);
 
                 Console.WriteLine("Saving file : {0}", filepath);
-
-                //Wirte file and end.
-                if (!fileInfo.Directory.Exists) Directory.CreateDirectory(fileInfo.Directory.FullName);
-                using (var file = fileInfo.Create())
-                {
-                    excel.Write(file);
-                }
+                
 
                 Console.WriteLine("DONE!!!");
 
@@ -462,16 +330,16 @@ namespace ExcelExtractor.XML
             return Do(out dummy);
         }
 
-        private void DoSheet(Sheet sheet, object[] fileargs = null)
+        private void DoSheet(ExcelSheet sheet, FileInfo fileinfo, object[] fileargs = null)
         {
             
-            //Process Row
-            if (sheet.Sql != SQLType.PlainText)
+            if (sheet.SQL != ExcelSQLType.PlainText)
             {
                 using (DbCommand cmd = conn.SheetConnection.CreateCommand())
                 {
 
-                    cmd.CommandType = sheet.Sql == SQLType.Procedure ? CommandType.StoredProcedure : CommandType.Text;
+                    cmd.CommandTimeout = conn.CommandTimeout;
+                    cmd.CommandType = sheet.SQL == ExcelSQLType.Procedure ? CommandType.StoredProcedure : CommandType.Text;
                     cmd.CommandText = sheet.Text;
 
                     if (fileargs != null)
@@ -479,7 +347,7 @@ namespace ExcelExtractor.XML
                         {
                             DbParameter param = cmd.CreateParameter();
                             param.DbType = DbType.String;
-                            param.ParameterName = cmd.Connection is SqlConnection ? "@F" + i : "F" + i;
+                            param.ParameterName = cmd.Connection is System.Data.SqlClient.SqlConnection ? "@F" + i : "F" + i;
                             param.Value = fileargs[i];
                             cmd.Parameters.Add(param);
                         }
@@ -489,21 +357,28 @@ namespace ExcelExtractor.XML
                         int idx = 0;
                         while (reader.Read())
                         {
+                            int currow = 1;
                             object[] args = new object[reader.FieldCount];
                             reader.GetValues(args);
+                            using (excel = new ExcelPackage(fileinfo))
+                            {
+                                var sh = excel.Workbook.Worksheets.Add(reader.FieldCount > 1 ? reader.GetValue(1).ToString() : "SQLSheet" + (sheetidx++));
 
-                            var sh = excel.CreateSheet(reader.FieldCount > 1 ? reader.GetValue(1).ToString() : "SQLSheet" + (sheetidx++));
+                                Console.WriteLine("Creating sheet '{0}' with given SQL...", sh.Name);
 
-                            Console.WriteLine("Creating sheet '{0}' with given SQL...", sh.SheetName);
+                                var row = sheet.Rows != null ? sheet.Rows.FirstOrDefault(r => r.ColumnHeader) : null;
+                                var idummy = 0;
+                                if (row != null) DoRow(ref idummy, row, sheet, sh, fileargs, args);
 
-                            var row = sheet.Row != null ? sheet.Row.FirstOrDefault(r => r.ColumnHeader) : null;
-                            var idummy = 0;
-                            if (row != null) DoRow(ref idummy, row, sheet, sh, fileargs, args);
+                                var etcrow = sheet.Rows != null ? sheet.Rows.Where(r => !r.ColumnHeader).ToArray() : new ExcelRow[0];
+                                for (int i = 0; i < etcrow.Length; i++) DoRow(ref currow, etcrow[i], sheet, sh, fileargs, args);
 
-                            var etcrow = sheet.Row != null ? sheet.Row.Where(r => !r.ColumnHeader).ToArray() : new Row[0];
-                            for (int i=0; i < etcrow.Length; i++) DoRow(ref i, etcrow[i], sheet, sh, fileargs, args);
+                                if (sheet.Style != null) foreach (var style in sheet.Style) ApplyStyle(sh, style);
+                                if (sh.Dimension != null) sh.Cells[sh.Dimension.Address].AutoFitColumns();
 
-                            ApplyCellStyle(sh, sheet);
+                                excel.Save();
+
+                            }
 
                             idx++;
                         }
@@ -513,25 +388,35 @@ namespace ExcelExtractor.XML
             }
             else
             {
-                var sh = excel.CreateSheet(!string.IsNullOrEmpty(sheet.Name) ? sheet.Name : "OKSheet" + (sheetidx++));
-                Console.WriteLine("Creating sheet '{0}'...", sh.SheetName);
-                for (int i = 0; i < (sheet.Row != null ? sheet.Row.Length : 0); i++) DoRow(ref i, sheet.Row[i], sheet, sh, fileargs);
-                ApplyCellStyle(sh, sheet);
+                int currow = 1;
+                using (excel = new ExcelPackage(fileinfo))
+                {
+                    var sh = excel.Workbook.Worksheets.Add(!string.IsNullOrEmpty(sheet.Name) ? sheet.Name : "OKSheet" + (sheetidx++));
+                    Console.WriteLine("Creating sheet '{0}'...", sh.Name);
+                    for (int i = 0; i < (sheet.Rows != null ? sheet.Rows.Count : 0); i++) DoRow(ref currow, sheet.Rows[i], sheet, sh, fileargs);
+
+                    if (sheet.Style != null) foreach (var style in sheet.Style) ApplyStyle(sh, style);
+                    if (sh.Dimension != null) sh.Cells[sh.Dimension.Address].AutoFitColumns();
+
+                    excel.Save();
+                }
+                    
             }
 
             Console.WriteLine("Sheet created!");
         }
 
-        private void DoRow(ref int rownum, Row row, Sheet sheet, ISheet exSheet, object[] fileargs = null, object[] sheetargs = null)
+        private void DoRow(ref int rownum, ExcelRow row, ExcelSheet sheet, ExcelWorksheet exSheet, object[] fileargs = null, object[] sheetargs = null)
         {
             //Process Cell
-            int cnt = rownum - 1;
-            if (row.Sql != SQLType.PlainText)
+            
+            if (row.SQL != ExcelSQLType.PlainText)
             {
                 using (DbCommand cmd = conn.RowConnection.CreateCommand())
                 {
 
-                    cmd.CommandType = row.Sql == SQLType.Procedure ? CommandType.StoredProcedure : CommandType.Text;
+                    cmd.CommandTimeout = conn.CommandTimeout;
+                    cmd.CommandType = row.SQL == ExcelSQLType.Procedure ? CommandType.StoredProcedure : CommandType.Text;
                     cmd.CommandText = row.Text;
 
                     if (fileargs != null)
@@ -539,7 +424,7 @@ namespace ExcelExtractor.XML
                         {
                             DbParameter param = cmd.CreateParameter();
                             param.DbType = DbType.String;
-                            param.ParameterName = cmd.Connection is SqlConnection ? "@F" + i : "F" + i;
+                            param.ParameterName = cmd.Connection is System.Data.SqlClient.SqlConnection ? "@F" + i : "F" + i;
                             param.Value = fileargs[i];
                             cmd.Parameters.Add(param);
                         }
@@ -549,37 +434,120 @@ namespace ExcelExtractor.XML
                         {
                             DbParameter param = cmd.CreateParameter();
                             param.DbType = DbType.String;
-                            param.ParameterName = cmd.Connection is SqlConnection ? "@S" + i : "S" + i;
+                            param.ParameterName = cmd.Connection is System.Data.SqlClient.SqlConnection ? "@S" + i : "S" + i;
                             param.Value = sheetargs[i];
                             cmd.Parameters.Add(param);
                         }
 
                     using (DbDataReader reader = cmd.ExecuteReader())
                     {
-                        var rw = exSheet.CreateRow(++cnt);
-                        var cols = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToArray();
-                        for (int i = 0; i < reader.FieldCount; i++)
+                        
+                        if (row.ColumnHeader)
                         {
-                            Cell dc = new Cell();
-                            dc.Sql = SQLType.PlainText;
-                            dc.Text = cols[i];
+                            int curcell = 1;
+                            using (var rw = exSheet.Cells[rownum++ + ":" + rownum])
+                            {
+                                var cols = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToArray();
+                                for (int i = 0; i < reader.FieldCount; i++)
+                                {
+                                    ExcelCell dc = new ExcelCell();
+                                    dc.SQL = ExcelSQLType.PlainText;
+                                    dc.Text = cols[i];
 
-                            DoCell(ref i, dc, row, sheet, rw, fileargs, sheetargs, cols);
+                                    DoCell(ref curcell, dc, row, sheet, rw, fileargs, sheetargs, cols);
+                                }
+                            }
                         }
+                        
                         while (reader.Read())
                         {
-                            rw = exSheet.CreateRow(++cnt);
-                            Console.WriteLine("Writing row {0} with given SQL...", rw.RowNum);
-                            object[] args = new object[reader.FieldCount];
-                            reader.GetValues(args);
-                            for (int i = 0; i < reader.FieldCount; i++)
+                            int curcell = 1;
+                            using (var rw = exSheet.Cells[rownum++ + ":" + rownum])
                             {
-                                Cell dc = new Cell();
-                                dc.Sql = SQLType.PlainText;
-                                dc.Text = reader.GetValue(i).ToString();
+                                Console.WriteLine("Writing row {0} with given SQL...", rw.Start.Row);
+                                object[] args = new object[reader.FieldCount];
+                                reader.GetValues(args);
+                                for (int i = 0; i < reader.FieldCount; i++)
+                                {
 
-                                DoCell(ref i, dc, row, sheet, rw, fileargs, sheetargs, args);
+                                    if (row.Fetch != null)
+                                    {
+                                        using (DbCommand subcmd = conn.Connection.CreateCommand())
+                                        {
+
+                                            cmd.CommandTimeout = conn.CommandTimeout;
+                                            subcmd.CommandType = row.Fetch.SQL == ExcelSQLType.Procedure ? CommandType.StoredProcedure : CommandType.Text;
+                                            subcmd.CommandText = row.Fetch.Text;
+
+                                            if (fileargs != null)
+                                                for (int j = 0; j < fileargs.Length; j++)
+                                                {
+                                                    DbParameter param = subcmd.CreateParameter();
+                                                    param.DbType = DbType.String;
+                                                    param.ParameterName = subcmd.Connection is System.Data.SqlClient.SqlConnection ? "@F" + j : "F" + j;
+                                                    param.Value = fileargs[j];
+                                                    subcmd.Parameters.Add(param);
+                                                }
+
+                                            if (sheetargs != null)
+                                                for (int j = 0; j < sheetargs.Length; j++)
+                                                {
+                                                    DbParameter param = subcmd.CreateParameter();
+                                                    param.DbType = DbType.String;
+                                                    param.ParameterName = subcmd.Connection is System.Data.SqlClient.SqlConnection ? "@S" + j : "S" + j;
+                                                    param.Value = sheetargs[j];
+                                                    subcmd.Parameters.Add(param);
+                                                }
+
+                                            for (int j = 0; j < args.Length; j++)
+                                            {
+                                                DbParameter param = subcmd.CreateParameter();
+                                                param.DbType = DbType.String;
+                                                param.ParameterName = subcmd.Connection is System.Data.SqlClient.SqlConnection ? "@R" + j : "R" + j;
+                                                param.Value = args[j];
+                                                subcmd.Parameters.Add(param);
+                                            }
+
+                                            using (DbDataReader subreader = subcmd.ExecuteReader())
+                                            {
+                                                if (row.Fetch.Type == ExcelFetchType.Single)
+                                                {
+                                                    if (!subreader.Read()) continue;
+                                                    for (int j = 0; j < subreader.FieldCount; j++)
+                                                    {
+                                                        ExcelCell dc = new ExcelCell();
+                                                        dc.SQL = ExcelSQLType.PlainText;
+                                                        dc.Text = subreader.GetValue(j).ToString();
+
+                                                        DoCell(ref curcell, dc, row, sheet, rw, fileargs, sheetargs, args);
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    while (subreader.Read())
+                                                    {
+                                                        ExcelCell dc = new ExcelCell();
+                                                        dc.SQL = ExcelSQLType.PlainText;
+                                                        dc.Text = subreader.GetValue(0).ToString();
+
+                                                        DoCell(ref curcell, dc, row, sheet, rw, fileargs, sheetargs, args);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    else
+                                    {
+                                        ExcelCell dc = new ExcelCell();
+                                        dc.SQL = ExcelSQLType.PlainText;
+                                        dc.Text = reader.GetValue(i).ToString();
+
+                                        DoCell(ref curcell, dc, row, sheet, rw, fileargs, sheetargs, args);
+                                    }
+
+                                }
                             }
+                                
                         }
                     }
 
@@ -587,87 +555,63 @@ namespace ExcelExtractor.XML
             }
             else
             {
-                IRow rw = exSheet.CreateRow(++cnt);
-                Console.WriteLine("Writing row {0}...", rw.RowNum);
-                for (int i = 0; i < (row.Cell != null ? row.Cell.Length : 0); i++) DoCell(ref i, row.Cell[i], row, sheet, rw, fileargs, sheetargs);
+                int curcell = 1;
+                using (var rw = exSheet.Cells[rownum++ + ":" + rownum])
+                {
+                    Console.WriteLine("Writing row {0}...", rw.Start.Row);
+                    for (int i = 0; i < (row.Cells != null ? row.Cells.Count : 0); i++) DoCell(ref curcell, row.Cells[i], row, sheet, rw, fileargs, sheetargs);
+                }
             }
-
-            rownum = cnt;
 
 
         }
 
-        private void DoCell(ref int cellnum, Cell cell, Row row, Sheet sheet, IRow exRow, object[] fileargs = null, object[] sheetargs = null, object[] rowargs = null)
+        private void DoCell(ref int cellnum, ExcelCell cell, ExcelRow row, ExcelSheet sheet, ExcelRange exRow, object[] fileargs = null, object[] sheetargs = null, object[] rowargs = null)
         {
             //Cell Value
-            int cnt = cellnum - 1;
+            int cnt = cellnum;
             Action<string> cellfunc = val =>
             {
-                ICell cl = exRow.CreateCell(++cnt);
-                Console.WriteLine("Writing cell {0}...", cl.ColumnIndex);
-                cl.CellStyle = excel.CreateCellStyle();
-
-                if (styles.ContainsKey(cell.Style)) cl.CellStyle.CloneStyleFrom(styles[cell.Style]);
-
-                switch ((cell.HAlign ?? string.Empty).ToLower())
+                using (var cl = exRow[exRow.Start.Row, cnt++])
                 {
-                    case "left":
-                        cl.CellStyle.Alignment = HorizontalAlignment.Left;
-                        break;
-                    case "center":
-                        cl.CellStyle.Alignment = HorizontalAlignment.Center;
-                        break;
-                    case "right":
-                        cl.CellStyle.Alignment = HorizontalAlignment.Right;
-                        break;
-                }
-                switch ((cell.VAlign ?? string.Empty).ToLower())
-                {
-                    case "top":
-                        cl.CellStyle.VerticalAlignment = VerticalAlignment.Top;
-                        break;
-                    case "middle":
-                        cl.CellStyle.VerticalAlignment = VerticalAlignment.Center;
-                        break;
-                    case "bottom":
-                        cl.CellStyle.VerticalAlignment = VerticalAlignment.Bottom;
-                        break;
-                }
+                    Console.WriteLine("Writing cell {0}...", cl.Start.Address);
 
-                if (val != null)
-                {
-                    double nval;
-                    DateTime dval;
-                    bool isFomula = !string.IsNullOrEmpty(val) && val[0] == '=';
-                    string rawval = isFomula ? val.Substring(1) : val;
-                    switch (cell.Out)
+                    if (val != null)
                     {
-                        case OutType.DateTime:
-                            if (isFomula) cl.SetCellFormula(rawval); else if(DateTime.TryParse(rawval, out dval)) cl.SetCellValue(dval); else cl.SetCellValue(rawval);
-                            break;
-                        case OutType.Number:
-                            cl.SetCellType(CellType.Numeric);
-                            if (isFomula) cl.SetCellFormula(rawval); else if(double.TryParse(rawval, out nval)) cl.SetCellValue(nval); else cl.SetCellValue(rawval);
-                            break;
-                        case OutType.Normal:
-                            cl.SetCellType(CellType.Unknown);
-                            if (isFomula) cl.SetCellFormula(rawval); else cl.SetCellValue(rawval);
-                            break;
-                        default:
-                            cl.SetCellType(CellType.String);
-                            if (isFomula) cl.SetCellFormula(rawval); else cl.SetCellValue(rawval);
-                            break;
+                        double nval;
+                        DateTime dval;
+                        bool isFomula = !string.IsNullOrEmpty(val) && val[0] == '=';
+                        string rawval = isFomula ? val.Substring(1) : val;
+                        switch (cell.Out)
+                        {
+                            case ExcelOutType.DateTime:
+                                if (isFomula) cl.Formula = rawval; else if (DateTime.TryParse(rawval, out dval)) cl.Value = dval; else cl.Value = rawval;
+                                break;
+                            case ExcelOutType.Number:
+                                cl.Style.Numberformat.Format = "#,##0.00";
+                                if (isFomula) cl.Formula = rawval; else if (double.TryParse(rawval, out nval)) cl.Value = nval; else cl.Value = rawval;
+                                break;
+                            case ExcelOutType.Money:
+                                cl.Style.Numberformat.Format = "￦ #,##0";
+                                if (isFomula) cl.Formula = rawval; else if (double.TryParse(rawval, out nval)) cl.Value = nval; else cl.Value = rawval;
+                                break;
+                            case ExcelOutType.Normal:
+                            default:
+                                if (isFomula) cl.Formula = rawval; else cl.Value = rawval;
+                                break;
+                        }
                     }
                 }
 
             };
 
-            if (cell.Sql != SQLType.PlainText)
+            if (cell.SQL != ExcelSQLType.PlainText)
             {
                 using (DbCommand cmd = conn.CellConnection.CreateCommand())
                 {
 
-                    cmd.CommandType = cell.Sql == SQLType.Procedure ? CommandType.StoredProcedure : CommandType.Text;
+                    cmd.CommandTimeout = conn.CommandTimeout;
+                    cmd.CommandType = cell.SQL == ExcelSQLType.Procedure ? CommandType.StoredProcedure : CommandType.Text;
                     cmd.CommandText = cell.Text;
 
                     if (fileargs != null)
@@ -675,7 +619,7 @@ namespace ExcelExtractor.XML
                         {
                             DbParameter param = cmd.CreateParameter();
                             param.DbType = DbType.String;
-                            param.ParameterName = cmd.Connection is SqlConnection ? "@F" + i : "F" + i;
+                            param.ParameterName = cmd.Connection is System.Data.SqlClient.SqlConnection ? "@F" + i : "F" + i;
                             param.Value = fileargs[i];
                             cmd.Parameters.Add(param);
                         }
@@ -685,7 +629,7 @@ namespace ExcelExtractor.XML
                         {
                             DbParameter param = cmd.CreateParameter();
                             param.DbType = DbType.String;
-                            param.ParameterName = cmd.Connection is SqlConnection ? "@S" + i : "S" + i;
+                            param.ParameterName = cmd.Connection is System.Data.SqlClient.SqlConnection ? "@S" + i : "S" + i;
                             param.Value = sheetargs[i];
                             cmd.Parameters.Add(param);
                         }
@@ -695,7 +639,7 @@ namespace ExcelExtractor.XML
                         {
                             DbParameter param = cmd.CreateParameter();
                             param.DbType = DbType.String;
-                            param.ParameterName = cmd.Connection is SqlConnection ? "@R" + i : "R" + i;
+                            param.ParameterName = cmd.Connection is System.Data.SqlClient.SqlConnection ? "@R" + i : "R" + i;
                             param.Value = rowargs[i];
                             cmd.Parameters.Add(param);
                         }
@@ -716,6 +660,12 @@ namespace ExcelExtractor.XML
             }
 
             cellnum = cnt;
+        }
+
+        public void Dispose()
+        {
+            conn.Dispose();
+            excel.Dispose();
         }
     }
 
