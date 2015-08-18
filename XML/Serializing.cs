@@ -93,10 +93,6 @@ namespace ExcelExtractor.XML
         /// </summary>
         private readonly ExcelWorkbook book = null;
         /// <summary>
-        /// Excel Workbook
-        /// </summary>
-        private ExcelPackage excel = null;
-        /// <summary>
         /// Each DB Connection
         /// </summary>
 
@@ -271,16 +267,33 @@ namespace ExcelExtractor.XML
 
         private static ExcelOutType DetermineOutType(Type type)
         {
-            if(type == null) return ExcelOutType.Text;
-            if (type.IsPrimitive)
+            if (type == null) return ExcelOutType.Text;
+
+            switch (Type.GetTypeCode(type))
             {
-                if(type.IsAssignableFrom(typeof(double)) || type.IsAssignableFrom(typeof(float))) return ExcelOutType.Number;
-                else return ExcelOutType.Integer;
+                case TypeCode.DateTime:
+                    return ExcelOutType.DateTime;
+                
+                case TypeCode.Int16:
+                case TypeCode.Int32:
+                case TypeCode.Int64:
+                case TypeCode.UInt16:
+                case TypeCode.UInt32:
+                case TypeCode.UInt64:
+                    return ExcelOutType.Integer;
+
+                case TypeCode.Double:
+                case TypeCode.Single:
+                case TypeCode.Decimal:
+                    return ExcelOutType.Number;
+
+                case TypeCode.Char:
+                case TypeCode.String:
+                    return ExcelOutType.Text;
+                default:
+                    return ExcelOutType.Normal;
+
             }
-            if(type.IsAssignableFrom(typeof(DateTime))) return ExcelOutType.DateTime;
-            if(type.IsAssignableFrom(typeof(string))) return ExcelOutType.Text;
-            
-            return ExcelOutType.Normal;
         }
 
         public Serializing Do(out string path)
@@ -378,7 +391,11 @@ namespace ExcelExtractor.XML
                 if (book.Sheets != null)
                 {
                     Console.WriteLine("Generating sheets...");
-                    foreach (var sheet in book.Sheets) DoSheet(sheet, fileInfo, args);
+                    using (var excel = new ExcelPackage(fileInfo))
+                    {
+                        foreach (var sheet in book.Sheets) DoSheet(sheet, excel, args);
+                        excel.Save();
+                    }
                 }
                 else
                 {
@@ -454,9 +471,9 @@ namespace ExcelExtractor.XML
             return Do(out dummy);
         }
 
-        private void DoSheet(ExcelSheet sheet, FileInfo fileinfo, object[] fileargs = null)
+        private void DoSheet(ExcelSheet sheet, ExcelPackage excel, object[] fileargs = null)
         {
-            
+
             if (sheet.SQL != ExcelSQLType.PlainText)
             {
                 using (DbCommand cmd = conn.SheetConnection.CreateCommand())
@@ -478,53 +495,41 @@ namespace ExcelExtractor.XML
 
                     using (DbDataReader reader = cmd.ExecuteReader())
                     {
-                        int idx = 0;
                         while (reader.Read())
                         {
                             int currow = 1;
                             object[] args = new object[reader.FieldCount];
                             reader.GetValues(args);
-                            using (excel = new ExcelPackage(fileinfo))
-                            {
-                                var sh = excel.Workbook.Worksheets.Add(reader.FieldCount > 1 ? reader.GetValue(1).ToString() : "SQLSheet" + (sheetidx++));
 
-                                Console.WriteLine("Creating sheet '{0}' with given SQL...", sh.Name);
+                            var sh = excel.Workbook.Worksheets.Add(reader.FieldCount > 1 ? reader.GetValue(1).ToString() : "SQLSheet" + (sheetidx++));
 
-                                var row = sheet.Rows != null ? sheet.Rows.FirstOrDefault(r => r.ColumnHeader) : null;
-                                var idummy = 0;
-                                if (row != null) DoRow(ref idummy, row, sheet, sh, fileargs, args);
+                            Console.WriteLine("Creating sheet '{0}' with given SQL...", sh.Name);
 
-                                var etcrow = sheet.Rows != null ? sheet.Rows.Where(r => !r.ColumnHeader).ToArray() : new ExcelRow[0];
-                                for (int i = 0; i < etcrow.Length; i++) DoRow(ref currow, etcrow[i], sheet, sh, fileargs, args);
+                            var row = sheet.Rows != null ? sheet.Rows.FirstOrDefault(r => r.ColumnHeader) : null;
+                            var idummy = 0;
+                            if (row != null) DoRow(ref idummy, row, sheet, sh, fileargs, args);
 
-                                if (sheet.Style != null) foreach (var style in sheet.Style) ApplyStyle(sh, style);
-                                if (sh.Dimension != null) sh.Cells[sh.Dimension.Address].AutoFitColumns();
+                            var etcrow = sheet.Rows != null ? sheet.Rows.Where(r => !r.ColumnHeader).ToArray() : new ExcelRow[0];
+                            for (int i = 0; i < etcrow.Length; i++) DoRow(ref currow, etcrow[i], sheet, sh, fileargs, args);
 
-                                excel.Save();
+                            if (sheet.Style != null) foreach (var style in sheet.Style) ApplyStyle(sh, style);
+                            if (sh.Dimension != null) sh.Cells[sh.Dimension.Address].AutoFitColumns();
 
-                            }
-
-                            idx++;
                         }
                     }
-
                 }
+
             }
             else
             {
                 int currow = 1;
-                using (excel = new ExcelPackage(fileinfo))
-                {
-                    var sh = excel.Workbook.Worksheets.Add(!string.IsNullOrEmpty(sheet.Name) ? sheet.Name : "OKSheet" + (sheetidx++));
-                    Console.WriteLine("Creating sheet '{0}'...", sh.Name);
-                    for (int i = 0; i < (sheet.Rows != null ? sheet.Rows.Count : 0); i++) DoRow(ref currow, sheet.Rows[i], sheet, sh, fileargs);
+                var sh = excel.Workbook.Worksheets.Add(!string.IsNullOrEmpty(sheet.Name) ? sheet.Name : "OKSheet" + (sheetidx++));
+                Console.WriteLine("Creating sheet '{0}'...", sh.Name);
+                for (int i = 0; i < (sheet.Rows != null ? sheet.Rows.Count : 0); i++) DoRow(ref currow, sheet.Rows[i], sheet, sh, fileargs);
 
-                    if (sheet.Style != null) foreach (var style in sheet.Style) ApplyStyle(sh, style);
-                    if (sh.Dimension != null) sh.Cells[sh.Dimension.Address].AutoFitColumns();
+                if (sheet.Style != null) foreach (var style in sheet.Style) ApplyStyle(sh, style);
+                if (sh.Dimension != null) sh.Cells[sh.Dimension.Address].AutoFitColumns();
 
-                    excel.Save();
-                }
-                    
             }
 
             Console.WriteLine("Sheet created!");
@@ -578,7 +583,7 @@ namespace ExcelExtractor.XML
                                     dc.SQL = ExcelSQLType.PlainText;
                                     dc.Text = cols[i];
 
-                                    Console.WriteLine("Column '{0}' is have a type of '{1}'", cols[i], (reader.GetFieldType(i) ?? typeof(string)).FullName);
+                                    //Console.WriteLine("Column '{0}' is have a type of '{1}'", cols[i], (reader.GetFieldType(i) ?? typeof(string)).FullName);
 
                                     DoCell(ref curcell, dc, row, sheet, rw, fileargs, sheetargs, cols);
                                 }
@@ -590,7 +595,7 @@ namespace ExcelExtractor.XML
                             int curcell = 1;
                             using (var rw = exSheet.Cells[rownum++ + ":" + rownum])
                             {
-                                Console.WriteLine("Writing row {0} with given SQL...", rw.Start.Row);
+                                //Console.WriteLine("Writing row {0} with given SQL...", rw.Start.Row);
                                 object[] args = new object[reader.FieldCount];
                                 reader.GetValues(args);
                                 for (int i = 0; i < reader.FieldCount; i++)
@@ -687,7 +692,7 @@ namespace ExcelExtractor.XML
                 int curcell = 1;
                 using (var rw = exSheet.Cells[rownum++ + ":" + rownum])
                 {
-                    Console.WriteLine("Writing row {0}...", rw.Start.Row);
+                    //Console.WriteLine("Writing row {0}...", rw.Start.Row);
                     for (int i = 0; i < (row.Cells != null ? row.Cells.Count : 0); i++) DoCell(ref curcell, row.Cells[i], row, sheet, rw, fileargs, sheetargs);
                 }
             }
@@ -703,7 +708,7 @@ namespace ExcelExtractor.XML
             {
                 using (var cl = exRow[exRow.Start.Row, cnt++])
                 {
-                    Console.WriteLine("Writing cell {0}...", cl.Start.Address);
+                    //Console.WriteLine("Writing cell {0}...", cl.Start.Address);
 
                     if (val != null)
                     {
@@ -801,7 +806,6 @@ namespace ExcelExtractor.XML
             try
             {
                 conn.Dispose();
-                excel.Dispose();
             }
             catch
             {
