@@ -17,7 +17,7 @@ namespace ExcelExtractor
             if (File.Exists("example.xml"))
                 try
                 {
-                    new Serializing("example.xml").Do();
+                    new Serializing("example.xml").Do().Dispose();
                 }
                 catch (Exception E)
                 {
@@ -27,7 +27,7 @@ namespace ExcelExtractor
             {
                 try
                 {
-                    new Serializing(arg).Do();
+                    new Serializing(arg).Do().Dispose();
                 }
                 catch (Exception E)
                 {

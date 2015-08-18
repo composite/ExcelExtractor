@@ -2,12 +2,14 @@
 using System.Collections.Generic;
 using System.Data;
 using System.Data.Common;
+using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
 using System.Linq;
 using System.IO;
 using System.Xml.Serialization;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using OfficeOpenXml;
 using OfficeOpenXml.Style;
 
@@ -98,7 +100,7 @@ namespace ExcelExtractor.XML
         /// Each DB Connection
         /// </summary>
 
-        private ConnectClass conn = null;
+        private readonly ConnectClass conn = null;
         /// <summary>
         /// DB Connection String
         /// </summary>
@@ -112,6 +114,8 @@ namespace ExcelExtractor.XML
         /// sheet idx for sheet name duplication.
         /// </summary>
         private int sheetidx = 1;
+
+        private static readonly Regex cmdsplitter = new Regex("\\s+", RegexOptions.Compiled);
 
         /// <summary>
         /// Serialize constructor from a file
@@ -170,7 +174,7 @@ namespace ExcelExtractor.XML
             return co;
         }
 
-        private void ApplyStyle(ExcelWorksheet sheet, ExcelStyle style)
+        private static void ApplyStyle(ExcelWorksheet sheet, ExcelStyle style)
         {
             Console.WriteLine("Apply style range : " + style.Range);
             try
@@ -184,6 +188,7 @@ namespace ExcelExtractor.XML
                         Color co = TranslateColor(bord.Color);
 
                         ExcelBorderStyle st = ExcelBorderStyle.None;
+
                         if (bord.Style != null) Enum.TryParse(bord.Style, out st);
 
                         if (st != ExcelBorderStyle.None)
@@ -248,6 +253,7 @@ namespace ExcelExtractor.XML
             var exfile = book.File;
             string filepath;// = Path.Combine(exfile.Path ?? string.Empty, exfile.Name);
             object[] args = new object[0];
+            object[] evargs = new object[0];
 
             conn.Open();
 
@@ -288,17 +294,100 @@ namespace ExcelExtractor.XML
             if(fileInfo.Exists && !isOverwrite) throw new FileSkipException();
             if (!fileInfo.Directory.Exists) Directory.CreateDirectory(fileInfo.Directory.FullName);
 
+            evargs = new object[args.Length + 1];
+            evargs[0] = filepath;
+            if(args.Length > 0) Array.Copy(args, 0, evargs, 1, args.Length);
+
             try
             {
 
-                if (book.Sheets == null || book.Sheets.Count == 0) throw new SerializingException("No sheet specified. You must have least 1 <Sheet> element.");
+                if (book.Before != null)
+                {
+                    var before = book.Before;
+                    if (before.SQL != ExcelSQLType.PlainText)
+                    {
 
-                Console.WriteLine("Generating sheets...");
+                        using (DbCommand cmd = conn.Connection.CreateCommand())
+                        {
 
-                foreach (var sheet in book.Sheets) DoSheet(sheet, fileInfo, args);
+                            cmd.CommandTimeout = conn.CommandTimeout;
+                            cmd.CommandType = before.SQL == ExcelSQLType.Procedure ? CommandType.StoredProcedure : CommandType.Text;
+                            cmd.CommandText = before.Text;
+
+                            for (int i = 0; i < evargs.Length; i++)
+                            {
+                                DbParameter param = cmd.CreateParameter();
+                                param.DbType = DbType.String;
+                                param.ParameterName = cmd.Connection is System.Data.SqlClient.SqlConnection ? "@F" + i : "F" + i;
+                                param.Value = evargs[i];
+                                cmd.Parameters.Add(param);
+                            }
+
+                            cmd.ExecuteNonQuery();
+                        }
+
+                    }
+                    else if (!string.IsNullOrEmpty(before.CMD))
+                    {
+
+                        var process = new Process {EnableRaisingEvents = false};
+                        string[] split = cmdsplitter.Split(before.Text, 2);
+                        process.StartInfo.FileName = split[0];
+                        if (split.Length > 1) process.StartInfo.Arguments = String.Format(split[1], evargs);
+                        process.Start();
+
+                    }
+                }
+
+                if (book.Sheets != null)
+                {
+                    Console.WriteLine("Generating sheets...");
+                    foreach (var sheet in book.Sheets) DoSheet(sheet, fileInfo, args);
+                }
+                else
+                {
+                    Console.WriteLine("No sheet specified. file will not created.");
+                }
 
                 Console.WriteLine("Saving file : {0}", filepath);
-                
+
+                if (book.After != null)
+                {
+                    var after = book.After;
+                    if (after.SQL != ExcelSQLType.PlainText)
+                    {
+
+                        using (DbCommand cmd = conn.Connection.CreateCommand())
+                        {
+
+                            cmd.CommandTimeout = conn.CommandTimeout;
+                            cmd.CommandType = after.SQL == ExcelSQLType.Procedure ? CommandType.StoredProcedure : CommandType.Text;
+                            cmd.CommandText = after.Text;
+
+                            for (int i = 0; i < evargs.Length; i++)
+                            {
+                                DbParameter param = cmd.CreateParameter();
+                                param.DbType = DbType.String;
+                                param.ParameterName = cmd.Connection is System.Data.SqlClient.SqlConnection ? "@F" + i : "F" + i;
+                                param.Value = evargs[i];
+                                cmd.Parameters.Add(param);
+                            }
+
+                            cmd.ExecuteNonQuery();
+                        }
+
+                    }
+                    else if (!string.IsNullOrEmpty(after.CMD))
+                    {
+
+                        var process = new Process { EnableRaisingEvents = false };
+                        string[] split = cmdsplitter.Split(after.Text, 2);
+                        process.StartInfo.FileName = split[0];
+                        if (split.Length > 1) process.StartInfo.Arguments = String.Format(split[1], evargs);
+                        process.Start();
+
+                    }
+                }
 
                 Console.WriteLine("DONE!!!");
 
@@ -664,8 +753,15 @@ namespace ExcelExtractor.XML
 
         public void Dispose()
         {
-            conn.Dispose();
-            excel.Dispose();
+            try
+            {
+                conn.Dispose();
+                excel.Dispose();
+            }
+            catch
+            {
+                // ignored
+            }
         }
     }
 
