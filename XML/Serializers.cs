@@ -62,7 +62,12 @@ namespace ExcelExtractor.XML
         [XmlEnum(Name = "Normal")]
         Normal,
         /// <summary>
-        /// 엑셀 숫자 형식으로 출력
+        /// 엑셀 정수 형식으로 출력
+        /// </summary>
+        [XmlEnum(Name = "Integer")]
+        Integer,
+        /// <summary>
+        /// 엑셀 소수점 포함 형식으로 출력
         /// </summary>
         [XmlEnum(Name = "Number")]
         Number,
@@ -170,8 +175,33 @@ namespace ExcelExtractor.XML
         public string Path { get; set; }
         [XmlAttribute(AttributeName = "SQL")]
         public ExcelSQLType SQL { get; set; }
-        [XmlText]
+        [XmlIgnore]
         public string Text { get; set; }
+        [XmlText]
+        public XmlNode[] XmlContent
+        {
+            get
+            {
+                var dummy = new XmlDocument();
+                return new XmlNode[] {dummy.CreateCDataSection(Text)};
+            }
+
+            set
+            {
+                if (value != null)
+                {
+                    var result = new StringBuilder();
+                    foreach (var node in value)
+                    {
+                        if (node is XmlText) result.Append((node as XmlText).Value);
+                        else if (node is XmlCDataSection) result.Append((node as XmlCDataSection).Value);
+                        //else result.Append(" ");
+                    }
+                    Text = result.ToString();
+                }
+                else Text = null;
+            }
+        }
     }
 
     [XmlRoot(ElementName = "ConnectionString")]
@@ -183,8 +213,33 @@ namespace ExcelExtractor.XML
         public int Timeout { get; set; }
         [XmlAttribute(AttributeName = "EncryptFile")]
         public string EncryptFile { get; set; }
-        [XmlText]
+        [XmlIgnore]
         public string Text { get; set; }
+        [XmlText]
+        public XmlNode[] XmlContent
+        {
+            get
+            {
+                var dummy = new XmlDocument();
+                return new XmlNode[] { dummy.CreateCDataSection(Text) };
+            }
+
+            set
+            {
+                if (value != null)
+                {
+                    var result = new StringBuilder();
+                    foreach (var node in value)
+                    {
+                        if (node is XmlText) result.Append((node as XmlText).Value);
+                        else if (node is XmlCDataSection) result.Append((node as XmlCDataSection).Value);
+                        else result.Append(" ");
+                    }
+                    Text = result.ToString();
+                }
+                else Text = null;
+            }
+        }
     }
 
     [XmlRoot(ElementName = "Cell")]
@@ -194,8 +249,33 @@ namespace ExcelExtractor.XML
         public ExcelSQLType SQL { get; set; }
         [XmlAttribute(AttributeName = "Fetch")]
         public ExcelCellFetch Fetch { get; set; }
-        [XmlText]
+        [XmlIgnore]
         public string Text { get; set; }
+        [XmlText]
+        public XmlNode[] XmlContent
+        {
+            get
+            {
+                var dummy = new XmlDocument();
+                return new XmlNode[] { dummy.CreateCDataSection(Text) };
+            }
+
+            set
+            {
+                if (value != null)
+                {
+                    var result = new StringBuilder();
+                    foreach (var node in value)
+                    {
+                        if (node is XmlText) result.Append((node as XmlText).Value);
+                        else if (node is XmlCDataSection) result.Append((node as XmlCDataSection).Value);
+                        else result.Append(" ");
+                    }
+                    Text = result.ToString();
+                }
+                else Text = null;
+            }
+        }
         [XmlAttribute(AttributeName = "Out")]
         public ExcelOutType Out { get; set; }
     }
@@ -213,8 +293,33 @@ namespace ExcelExtractor.XML
         public bool ColumnHeader { get; set; }
         [XmlAttribute(AttributeName = "DataSet")]
         public bool DataSet { get; set; }
-        [XmlText]
+        [XmlIgnore]
         public string Text { get; set; }
+        [XmlText]
+        public XmlNode[] XmlContent
+        {
+            get
+            {
+                var dummy = new XmlDocument();
+                return new XmlNode[] { dummy.CreateCDataSection(Text) };
+            }
+
+            set
+            {
+                if (value != null)
+                {
+                    var result = new StringBuilder();
+                    foreach (var node in value)
+                    {
+                        if (node is XmlText) result.Append((node as XmlText).Value);
+                        else if (node is XmlCDataSection) result.Append((node as XmlCDataSection).Value);
+                        else result.Append(" ");
+                    }
+                    Text = result.ToString();
+                }
+                else Text = null;
+            }
+        }
     }
 
     [XmlRoot(ElementName = "Fetch")]
@@ -222,8 +327,33 @@ namespace ExcelExtractor.XML
     {
         [XmlAttribute(AttributeName = "Type")]
         public ExcelFetchType Type { get; set; }
-        [XmlText]
+        [XmlIgnore]
         public string Text { get; set; }
+        [XmlText]
+        public XmlNode[] XmlContent
+        {
+            get
+            {
+                var dummy = new XmlDocument();
+                return new XmlNode[] { dummy.CreateCDataSection(Text) };
+            }
+
+            set
+            {
+                if (value != null)
+                {
+                    var result = new StringBuilder();
+                    foreach (var node in value)
+                    {
+                        if (node is XmlText) result.Append((node as XmlText).Value);
+                        else if (node is XmlCDataSection) result.Append((node as XmlCDataSection).Value);
+                        else result.Append(" ");
+                    }
+                    Text = result.ToString();
+                }
+                else Text = null;
+            }
+        }
         [XmlAttribute(AttributeName = "SQL")]
         public ExcelSQLType SQL { get; set; }
     }
@@ -239,8 +369,33 @@ namespace ExcelExtractor.XML
         public List<ExcelStyle> Style { get; set; }
         [XmlAttribute(AttributeName = "SQL")]
         public ExcelSQLType SQL { get; set; }
-        [XmlText]
+        [XmlIgnore]
         public string Text { get; set; }
+        [XmlText]
+        public XmlNode[] XmlContent
+        {
+            get
+            {
+                var dummy = new XmlDocument();
+                return new XmlNode[] { dummy.CreateCDataSection(Text) };
+            }
+
+            set
+            {
+                if (value != null)
+                {
+                    var result = new StringBuilder();
+                    foreach (var node in value)
+                    {
+                        if (node is XmlText) result.Append((node as XmlText).Value);
+                        else if (node is XmlCDataSection) result.Append((node as XmlCDataSection).Value);
+                        else result.Append(" ");
+                    }
+                    Text = result.ToString();
+                }
+                else Text = null;
+            }
+        }
     }
 
     [XmlRoot(ElementName = "Align")]
@@ -350,6 +505,15 @@ namespace ExcelExtractor.XML
         public string ColGroup { get; set; }
         [XmlAttribute(AttributeName = "RowGroup")]
         public string RowGroup { get; set; }
+        //[XmlAttribute(AttributeName = "Format")]
+        //public ExcelFormatOverride Format { get; set; }
+    }
+
+    [XmlRoot(ElementName = "Format")]
+    public class ExcelFormatOverride
+    {
+        [XmlAttribute(AttributeName = "Out")]
+        public ExcelOutType Out { get; set; }
     }
 
     public abstract class ExcelEventBase
@@ -360,8 +524,33 @@ namespace ExcelExtractor.XML
         public ExcelSQLType SQL { get; set; }
         [XmlAttribute(AttributeName = "Specific")]
         public bool Specific { get; set; }
-        [XmlText]
+        [XmlIgnore]
         public string Text { get; set; }
+        [XmlText]
+        public XmlNode[] XmlContent
+        {
+            get
+            {
+                var dummy = new XmlDocument();
+                return new XmlNode[] { dummy.CreateCDataSection(Text) };
+            }
+
+            set
+            {
+                if (value != null)
+                {
+                    var result = new StringBuilder();
+                    foreach (var node in value)
+                    {
+                        if (node is XmlText) result.Append((node as XmlText).Value);
+                        else if (node is XmlCDataSection) result.Append((node as XmlCDataSection).Value);
+                        else result.Append(" ");
+                    }
+                    Text = result.ToString();
+                }
+                else Text = null;
+            }
+        }
     }
 
     [XmlRoot(ElementName = "Before")]

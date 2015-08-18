@@ -239,11 +239,48 @@ namespace ExcelExtractor.XML
 
                 }
 
+                /*if (style.Format != null)
+                {
+                    switch (style.Format.Out)
+                    {
+                        case ExcelOutType.DateTime:
+                            //...?
+                            break;
+                        case ExcelOutType.Integer:
+                            range.Style.Numberformat.Format = "#,##0";
+                            break;
+                        case ExcelOutType.Number:
+                            range.Style.Numberformat.Format = "#,##0.00";
+                            break;
+                        case ExcelOutType.Money:
+                            range.Style.Numberformat.Format = "￦ #,##0";
+                            break;
+                        case ExcelOutType.Normal:
+                        default:
+                            range.Style.Numberformat.Format = null;
+                            break;
+                    }
+                }*/
+
             }
             catch (Exception E)
             {
                 Console.Error.WriteLine(E.ToString());
             }
+        }
+
+        private static ExcelOutType DetermineOutType(Type type)
+        {
+            if(type == null) return ExcelOutType.Text;
+            if (type.IsPrimitive)
+            {
+                if(type.IsAssignableFrom(typeof(double)) || type.IsAssignableFrom(typeof(float))) return ExcelOutType.Number;
+                else return ExcelOutType.Integer;
+            }
+            if(type.IsAssignableFrom(typeof(DateTime))) return ExcelOutType.DateTime;
+            if(type.IsAssignableFrom(typeof(string))) return ExcelOutType.Text;
+            
+            return ExcelOutType.Normal;
         }
 
         public Serializing Do(out string path)
@@ -331,9 +368,8 @@ namespace ExcelExtractor.XML
                     {
 
                         var process = new Process {EnableRaisingEvents = false};
-                        string[] split = cmdsplitter.Split(before.Text, 2);
-                        process.StartInfo.FileName = split[0];
-                        if (split.Length > 1) process.StartInfo.Arguments = String.Format(split[1], evargs);
+                        process.StartInfo.FileName = before.CMD;
+                        if (before.Text != null) process.StartInfo.Arguments = before.Text;
                         process.Start();
 
                     }
@@ -381,9 +417,8 @@ namespace ExcelExtractor.XML
                     {
 
                         var process = new Process { EnableRaisingEvents = false };
-                        string[] split = cmdsplitter.Split(after.Text, 2);
-                        process.StartInfo.FileName = split[0];
-                        if (split.Length > 1) process.StartInfo.Arguments = String.Format(split[1], evargs);
+                        process.StartInfo.FileName = after.CMD;
+                        if (after.Text != null) process.StartInfo.Arguments = after.Text;
                         process.Start();
 
                     }
@@ -543,6 +578,8 @@ namespace ExcelExtractor.XML
                                     dc.SQL = ExcelSQLType.PlainText;
                                     dc.Text = cols[i];
 
+                                    Console.WriteLine("Column '{0}' is have a type of '{1}'", cols[i], (reader.GetFieldType(i) ?? typeof(string)).FullName);
+
                                     DoCell(ref curcell, dc, row, sheet, rw, fileargs, sheetargs, cols);
                                 }
                             }
@@ -607,6 +644,7 @@ namespace ExcelExtractor.XML
                                                         ExcelCell dc = new ExcelCell();
                                                         dc.SQL = ExcelSQLType.PlainText;
                                                         dc.Text = subreader.GetValue(j).ToString();
+                                                        dc.Out = DetermineOutType(subreader.GetFieldType(j));
 
                                                         DoCell(ref curcell, dc, row, sheet, rw, fileargs, sheetargs, args);
                                                     }
@@ -618,6 +656,7 @@ namespace ExcelExtractor.XML
                                                         ExcelCell dc = new ExcelCell();
                                                         dc.SQL = ExcelSQLType.PlainText;
                                                         dc.Text = subreader.GetValue(0).ToString();
+                                                        dc.Out = DetermineOutType(subreader.GetFieldType(0));
 
                                                         DoCell(ref curcell, dc, row, sheet, rw, fileargs, sheetargs, args);
                                                     }
@@ -630,6 +669,7 @@ namespace ExcelExtractor.XML
                                         ExcelCell dc = new ExcelCell();
                                         dc.SQL = ExcelSQLType.PlainText;
                                         dc.Text = reader.GetValue(i).ToString();
+                                        dc.Out = DetermineOutType(reader.GetFieldType(i));
 
                                         DoCell(ref curcell, dc, row, sheet, rw, fileargs, sheetargs, args);
                                     }
@@ -668,6 +708,7 @@ namespace ExcelExtractor.XML
                     if (val != null)
                     {
                         double nval;
+                        long lval;
                         DateTime dval;
                         bool isFomula = !string.IsNullOrEmpty(val) && val[0] == '=';
                         string rawval = isFomula ? val.Substring(1) : val;
@@ -676,13 +717,17 @@ namespace ExcelExtractor.XML
                             case ExcelOutType.DateTime:
                                 if (isFomula) cl.Formula = rawval; else if (DateTime.TryParse(rawval, out dval)) cl.Value = dval; else cl.Value = rawval;
                                 break;
+                            case ExcelOutType.Integer:
+                                cl.Style.Numberformat.Format = "#,##0";
+                                if (isFomula) cl.Formula = rawval; else if (long.TryParse(rawval, out lval)) cl.Value = lval; else cl.Value = rawval;
+                                break;
                             case ExcelOutType.Number:
                                 cl.Style.Numberformat.Format = "#,##0.00";
                                 if (isFomula) cl.Formula = rawval; else if (double.TryParse(rawval, out nval)) cl.Value = nval; else cl.Value = rawval;
                                 break;
                             case ExcelOutType.Money:
                                 cl.Style.Numberformat.Format = "￦ #,##0";
-                                if (isFomula) cl.Formula = rawval; else if (double.TryParse(rawval, out nval)) cl.Value = nval; else cl.Value = rawval;
+                                if (isFomula) cl.Formula = rawval; else if (long.TryParse(rawval, out lval)) cl.Value = lval; else cl.Value = rawval;
                                 break;
                             case ExcelOutType.Normal:
                             default:
