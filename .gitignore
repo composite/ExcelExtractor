@@ -207,4 +207,5 @@ FakesAssemblies/
 # Visual Studio 6 workspace options file
 *.opt
 
-example.xml
+*.GhostDoc.xml
+WE-Markdown.css

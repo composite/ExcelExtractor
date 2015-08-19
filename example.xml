@@ -1,0 +1,41 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Workbook Label="예제 생성기">
+    <File Name="example.{0}.xlsx" Path="D:/" SQL="Text">SELECT 100</File>
+    <ConnectionString Type="System.Data.SqlClient" EncryptFile="example.bin">User ID=userid;Initial Catalog=dbname;Data Source=127.0.0.1;Password=password</ConnectionString>
+    <Sheet Name="test1">
+        <Row>
+            <Cell SQL="Text" Fetch="Horizontal">SELECT <![CDATA[100]]></Cell>
+            <Cell>Value1</Cell>
+            <Cell>Value2</Cell>
+            <Cell Out="Text">=LEFT("ASD",2)</Cell>
+        </Row>
+        <Row SQL="Text">
+          SELECT 100 UNION SELECT 200
+          <Fetch SQL="Text" Type="Fetch">SELECT @R0+1 UNION SELECT @R0+2</Fetch>
+        </Row>
+        <Row SQL="Text" ColumnHeader="true">
+          SELECT 300 UNION SELECT 400
+          <Fetch SQL="Text" Type="Single">SELECT @R0+1,@R0+2</Fetch>
+        </Row>
+    </Sheet>
+    <Sheet Name="test2" SQL="Text">
+      <Style Range="A1:L1" ColGroup="Even" RowGroup="Odd">
+        <Align Horizontal="Center" Vertical="Middle"/>
+        <Font Family="Arial" Size="9" Color="Red" Bold="true" Italic="true" Underline="true"/>
+        <Back Color="Yellow" Pattern="Solid"/>
+        <Border>
+            <All    Color="Black" Style="Thin"/>
+            <Top    Color="Black" Style="Solid"/>
+            <Left   Color="Black" Style="Solid"/>
+            <Right  Color="Black" Style="Solid"/>
+            <Bottom Color="Black" Style="Solid"/>
+        </Border>
+      </Style>
+      SELECT 100 UNION SELECT 200
+      <Row SQL="Text" DataSet="true">
+        SELECT 300+@S0,300*@S0 UNION SELECT 400*@S0,400+@S0
+      </Row>
+    </Sheet>
+    <!--<Before CMD="some.exe" SQL="Proc" Specific="false">SP_MYPROC @File, @Path</Before>-->
+    <!--<After CMD="some.exe" SQL="Proc" Specific="true">-someargs</After>-->
+</Workbook>
