@@ -396,6 +396,9 @@ namespace ExcelExtractor.XML
                 else Text = null;
             }
         }
+
+        [XmlAttribute(AttributeName = "AutoFilter")]
+        public bool AutoFilter { get; set; }
     }
 
     [XmlRoot(ElementName = "Align")]

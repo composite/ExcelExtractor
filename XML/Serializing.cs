@@ -181,6 +181,8 @@ namespace ExcelExtractor.XML
                     var prop = range.Style.Border;
                     Action<ExcelBorderBase, ExcelBorderItem> borfunc = (bord, item) =>
                     {
+                        if (bord.Color == null) return;
+
                         Color co = TranslateColor(bord.Color);
 
                         ExcelBorderStyle st = ExcelBorderStyle.None;
@@ -216,9 +218,9 @@ namespace ExcelExtractor.XML
                 {
                     var prop = range.Style.Font;
                     var font = style.Font;
-                    prop.Color.SetColor(TranslateColor(font.Color));
-                    prop.Name = font.Family;
-                    prop.Size = font.Size;
+                    if(font.Color != null) prop.Color.SetColor(TranslateColor(font.Color));
+                    prop.Name = font.Family ?? prop.Name;
+                    prop.Size = font.Size > 0 ? font.Size : prop.Size;
                     prop.Bold = font.Bold;
                     prop.Italic = font.Italic;
                     prop.UnderLine = font.Underline;
@@ -497,7 +499,7 @@ namespace ExcelExtractor.XML
                     {
                         while (reader.Read())
                         {
-                            int currow = 1;
+                            int currow = 0;
                             object[] args = new object[reader.FieldCount];
                             reader.GetValues(args);
 
@@ -513,6 +515,7 @@ namespace ExcelExtractor.XML
                             for (int i = 0; i < etcrow.Length; i++) DoRow(ref currow, etcrow[i], sheet, sh, fileargs, args);
 
                             if (sheet.Style != null) foreach (var style in sheet.Style) ApplyStyle(sh, style);
+                            if (sheet.AutoFilter) sh.Cells[sh.Dimension.Address].AutoFilter = true;
                             if (sh.Dimension != null) sh.Cells[sh.Dimension.Address].AutoFitColumns();
 
                         }
@@ -522,12 +525,13 @@ namespace ExcelExtractor.XML
             }
             else
             {
-                int currow = 1;
+                int currow = 0;
                 var sh = excel.Workbook.Worksheets.Add(!string.IsNullOrEmpty(sheet.Name) ? sheet.Name : "OKSheet" + (sheetidx++));
                 Console.WriteLine("Creating sheet '{0}'...", sh.Name);
                 for (int i = 0; i < (sheet.Rows != null ? sheet.Rows.Count : 0); i++) DoRow(ref currow, sheet.Rows[i], sheet, sh, fileargs);
 
                 if (sheet.Style != null) foreach (var style in sheet.Style) ApplyStyle(sh, style);
+                if (sheet.AutoFilter) sh.Cells[sh.Dimension.Address].AutoFilter = true;
                 if (sh.Dimension != null) sh.Cells[sh.Dimension.Address].AutoFitColumns();
 
             }
@@ -574,8 +578,9 @@ namespace ExcelExtractor.XML
                         if (row.ColumnHeader)
                         {
                             int curcell = 1;
-                            using (var rw = exSheet.Cells[rownum++ + ":" + rownum])
+                            using (var rw = exSheet.Cells[++rownum + ":" + rownum])
                             {
+                                Console.WriteLine("Writing row {0} with Column header...", rw.Address);
                                 var cols = Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToArray();
                                 for (int i = 0; i < reader.FieldCount; i++)
                                 {
@@ -587,15 +592,16 @@ namespace ExcelExtractor.XML
 
                                     DoCell(ref curcell, dc, row, sheet, rw, fileargs, sheetargs, cols);
                                 }
+                                exSheet.View.FreezePanes(2, 1);
                             }
                         }
                         
                         while (reader.Read())
                         {
                             int curcell = 1;
-                            using (var rw = exSheet.Cells[rownum++ + ":" + rownum])
+                            using (var rw = exSheet.Cells[++rownum + ":" + rownum])
                             {
-                                //Console.WriteLine("Writing row {0} with given SQL...", rw.Start.Row);
+                                //Console.WriteLine("Writing row {0} with given SQL...", rw.Address);
                                 object[] args = new object[reader.FieldCount];
                                 reader.GetValues(args);
                                 for (int i = 0; i < reader.FieldCount; i++)
@@ -690,7 +696,7 @@ namespace ExcelExtractor.XML
             else
             {
                 int curcell = 1;
-                using (var rw = exSheet.Cells[rownum++ + ":" + rownum])
+                using (var rw = exSheet.Cells[++rownum + ":" + rownum])
                 {
                     //Console.WriteLine("Writing row {0}...", rw.Start.Row);
                     for (int i = 0; i < (row.Cells != null ? row.Cells.Count : 0); i++) DoCell(ref curcell, row.Cells[i], row, sheet, rw, fileargs, sheetargs);
@@ -720,6 +726,13 @@ namespace ExcelExtractor.XML
                         switch (cell.Out)
                         {
                             case ExcelOutType.DateTime:
+                                cl.Style.Numberformat.Format = "yyyy-mm-dd hh:mm:ss";
+                                if (isFomula) cl.Formula = rawval; else if (DateTime.TryParse(rawval, out dval)) cl.Value = dval; else cl.Value = rawval;
+                                if (cl.Text.EndsWith("00:00:00"))
+                                    cl.Style.Numberformat.Format = "yyyy-mm-dd";
+                                break;
+                            case ExcelOutType.Date:
+                                cl.Style.Numberformat.Format = "yyyy-mm-dd";
                                 if (isFomula) cl.Formula = rawval; else if (DateTime.TryParse(rawval, out dval)) cl.Value = dval; else cl.Value = rawval;
                                 break;
                             case ExcelOutType.Integer:
