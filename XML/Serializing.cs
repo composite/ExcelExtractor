@@ -97,10 +97,7 @@ namespace ExcelExtractor.XML
         /// </summary>
 
         private readonly ConnectClass conn = null;
-        /// <summary>
-        /// DB Connection String
-        /// </summary>
-        private readonly string connstr = null;
+
         /// <summary>
         /// Overwrite existing file Y/N
         /// </summary>
@@ -298,14 +295,12 @@ namespace ExcelExtractor.XML
             }
         }
 
-        public Serializing Do(out string path)
+        public Serializing Do(out string[] path)
         {
             Console.WriteLine("Serialize processing...");
 
+            List<string> paths = new List<string>(0);
             var exfile = book.File;
-            string filepath;// = Path.Combine(exfile.Path ?? string.Empty, exfile.Name);
-            object[] args = new object[0];
-            object[] evargs = new object[0];
 
             conn.Open();
 
@@ -320,35 +315,42 @@ namespace ExcelExtractor.XML
 
                     using (DbDataReader reader = cmd.ExecuteReader())
                     {
-                        if (reader.Read())
+                        while (reader.Read())
                         {
-                            args = new object[reader.FieldCount];
+                            var args = new object[reader.FieldCount];
                             reader.GetValues(args);
-                            filepath = Path.Combine(exfile.Path ?? string.Empty, String.Format(exfile.Name, args));
-                        }
-                        else
-                        {
-                            filepath = Path.Combine(exfile.Path ?? string.Empty, String.Format(exfile.Name, new object[0]));
+                            paths.Add(DoFile(Path.Combine(exfile.Path ?? string.Empty, String.Format(exfile.Name, args)), args));
                         }
                     }
                 }
             }
             else
             {
-                filepath = Path.Combine(exfile.Path ?? string.Empty, exfile.Name);
+                paths.Add(DoFile(Path.Combine(exfile.Path ?? string.Empty, exfile.Name), new object[0]));
             }
 
+            path = paths.ToArray();
+            return this;
+        }
+
+        public Serializing Do()
+        {
+            string[] dummy;
+            return Do(out dummy);
+        }
+
+        private string DoFile(string filepath, object[] args)
+        {
             Console.WriteLine("Generating Excel file : {0}", filepath);
 
             FileInfo fileInfo = new FileInfo(filepath);
-            
 
-            if(fileInfo.Exists && !isOverwrite) throw new FileSkipException();
+            if (fileInfo.Exists && !isOverwrite) throw new FileSkipException();
             if (!fileInfo.Directory.Exists) Directory.CreateDirectory(fileInfo.Directory.FullName);
 
-            evargs = new object[args.Length + 1];
+            var evargs = new object[args.Length + 1];
             evargs[0] = filepath;
-            if(args.Length > 0) Array.Copy(args, 0, evargs, 1, args.Length);
+            if (args.Length > 0) Array.Copy(args, 0, evargs, 1, args.Length);
 
             try
             {
@@ -382,7 +384,7 @@ namespace ExcelExtractor.XML
                     else if (!string.IsNullOrEmpty(before.CMD))
                     {
 
-                        var process = new Process {EnableRaisingEvents = false};
+                        var process = new Process { EnableRaisingEvents = false };
                         process.StartInfo.FileName = before.CMD;
                         if (before.Text != null) process.StartInfo.Arguments = before.Text;
                         process.Start();
@@ -448,29 +450,18 @@ namespace ExcelExtractor.XML
             }
             catch (UnauthorizedAccessException e)
             {
-                throw new SerializingException("Cannot create and write file. access denied.", e) {FilePath = filepath};
+                throw new SerializingException("Cannot create and write file. access denied.", e) { FilePath = filepath };
             }
             catch (IOException e)
             {
-                throw new SerializingException("Cannot create and write file. file not exists or locked for other process.", e) {FilePath = filepath};
+                throw new SerializingException("Cannot create and write file. file not exists or locked for other process.", e) { FilePath = filepath };
             }
             catch (Exception e)
             {
-                throw new SerializingException(e) {FilePath = filepath};
-            }
-            finally
-            {
-                conn.Close();
+                throw new SerializingException(e) { FilePath = filepath };
             }
 
-            path = filepath;
-            return this;
-        }
-
-        public Serializing Do()
-        {
-            string dummy;
-            return Do(out dummy);
+            return filepath;
         }
 
         private void DoSheet(ExcelSheet sheet, ExcelPackage excel, object[] fileargs = null)
